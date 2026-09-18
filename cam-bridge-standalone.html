@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CamBridge - スマホをPCカメラに</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --accent:#58a6ff; --accent2:#3fb950; --danger:#f85149;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Hiragino Sans,"Yu Gothic",sans-serif;
+    display:flex; flex-direction:column; align-items:center; padding:24px 16px 60px;
+  }
+  h1{font-size:20px; margin:8px 0 4px;}
+  .sub{color:var(--muted); font-size:13px; margin-bottom:22px; text-align:center;}
+  .wrap{width:100%; max-width:480px; display:flex; flex-direction:column;}
+  .role-select{display:flex; gap:12px; width:100%; max-width:480px; margin-bottom:8px;}
+  .role-btn{
+    flex:1; padding:22px 12px; border-radius:14px; border:1px solid var(--border);
+    background:var(--panel); color:var(--text); font-size:15px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+  }
+  .role-btn:hover{border-color:var(--accent);}
+  .role-btn .emoji{font-size:28px;}
+  .card{
+    width:100%; background:var(--panel); border:1px solid var(--border);
+    border-radius:14px; padding:20px; margin-bottom:16px;
+  }
+  video{width:100%; border-radius:10px; background:#000; display:block; aspect-ratio:16/9; object-fit:cover;}
+  .status{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); margin:12px 0;}
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--muted); flex-shrink:0;}
+  .dot.ok{background:var(--accent2); box-shadow:0 0 0 3px rgba(63,185,80,.2);}
+  .dot.warn{background:#d29922; box-shadow:0 0 0 3px rgba(210,153,34,.2);}
+  .dot.err{background:var(--danger);}
+  input, select{
+    width:100%; padding:10px; border-radius:8px; border:1px solid var(--border);
+    background:var(--bg); color:var(--text); font-size:14px; margin-top:6px;
+  }
+  label{font-size:12px; color:var(--muted);}
+  button.primary{
+    width:100%; padding:14px; border-radius:10px; border:none; background:var(--accent);
+    color:#fff; font-size:15px; font-weight:600; cursor:pointer; margin-top:14px;
+  }
+  button.primary:disabled{opacity:.5; cursor:default;}
+  .back{background:none; border:none; color:var(--muted); font-size:13px; cursor:pointer; margin-bottom:14px; align-self:flex-start; padding:0;}
+  .hint{font-size:12px; color:var(--muted); line-height:1.6; margin-top:14px;}
+</style>
+</head>
+<body>
+
+<h1>📡 CamBridge</h1>
+<div class="sub">スマホのカメラをPCへリアルタイム転送 (OBSブラウザソース対応)<br>PeerJS無料サーバー利用・完全ローカルHTML版</div>
+
+<div id="roleSelect" class="role-select">
+  <button class="role-btn" id="btnSender"><span class="emoji">📱</span>送信（スマホ側）</button>
+  <button class="role-btn" id="btnReceiver"><span class="emoji">🖥️</span>受信（PC / OBS側）</button>
+</div>
+
+<div id="setupView" class="wrap" style="display:none;">
+  <div class="card">
+    <label>合言葉（スマホとPCで同じ文字を入力してください／半角英数字推奨）</label>
+    <input type="text" id="roomCode" placeholder="例: mycam2026">
+    <button class="primary" id="confirmRoom">この合言葉で進む</button>
+    <div class="hint">一度入力すると、このブラウザに保存され次回から自動入力されます。他人と被らないよう、少し独自性のある文字列にしてください。</div>
+  </div>
+</div>
+
+<div id="senderView" class="wrap" style="display:none;">
+  <button class="back" id="backFromSender">← 戻る</button>
+  <div class="card">
+    <div class="status"><span class="dot" id="senderDot"></span><span id="senderStatusText">準備中…</span></div>
+    <video id="localVideo" autoplay playsinline muted></video>
+    <select id="cameraSelect"></select>
+    <button class="primary" id="startSenderBtn">カメラを起動して配信開始</button>
+    <div class="hint">このスマホでページを開いたままにしてください。同じWi-Fiでなくても、インターネット経由でPCと接続されます。</div>
+  </div>
+</div>
+
+<div id="receiverView" class="wrap" style="display:none;">
+  <button class="back" id="backFromReceiver">← 戻る</button>
+  <div class="card">
+    <div class="status"><span class="dot" id="receiverDot"></span><span id="receiverStatusText">スマホ側の接続を待っています…</span></div>
+    <video id="remoteVideo" autoplay playsinline></video>
+    <div class="hint">
+      OBSで使う場合：「ソース」→「＋」→「ブラウザ」で、このHTMLファイルのパスを<br>
+      <code>file:///C:/.../cam-bridge-standalone.html</code> のように指定してください（幅1280×高さ720推奨）。
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const roleSelect = document.getElementById('roleSelect');
+  const setupView = document.getElementById('setupView');
+  const senderView = document.getElementById('senderView');
+  const receiverView = document.getElementById('receiverView');
+  const roomInput = document.getElementById('roomCode');
+  let pendingRole = null;
+
+  roomInput.value = localStorage.getItem('cambridge_room') || '';
+
+  document.getElementById('btnSender').onclick = () => { pendingRole='sender'; showSetup(); };
+  document.getElementById('btnReceiver').onclick = () => { pendingRole='receiver'; showSetup(); };
+  document.getElementById('backFromSender').onclick = () => showView('select');
+  document.getElementById('backFromReceiver').onclick = () => showView('select');
+
+  function showSetup(){
+    if(roomInput.value.trim()){ proceedWithRole(); return; }
+    roleSelect.style.display='none';
+    setupView.style.display='flex';
+  }
+  document.getElementById('confirmRoom').onclick = proceedWithRole;
+
+  function proceedWithRole(){
+    const code = roomInput.value.trim();
+    if(!code){ alert('合言葉を入力してください'); return; }
+    localStorage.setItem('cambridge_room', code);
+    showView(pendingRole);
+  }
+
+  function showView(v){
+    roleSelect.style.display = v==='select' ? 'flex' : 'none';
+    setupView.style.display = 'none';
+    senderView.style.display = v==='sender' ? 'flex' : 'none';
+    receiverView.style.display = v==='receiver' ? 'flex' : 'none';
+    if(v==='receiver') startReceiver();
+    if(v==='sender') initSenderCameraList();
+  }
+
+  function setDot(id, state){ document.getElementById(id).className = 'dot ' + (state||''); }
+  function roomCode(){ return (localStorage.getItem('cambridge_room')||'default').replace(/[^a-zA-Z0-9_-]/g,''); }
+  function senderPeerId(){ return 'cambridge-' + roomCode() + '-sender'; }
+  function receiverPeerId(){ return 'cambridge-' + roomCode() + '-receiver'; }
+
+  // ===================== SENDER (phone) =====================
+  let localStream, senderPeer, currentCall;
+  const videoSelect = document.getElementById('cameraSelect');
+  const localVideo = document.getElementById('localVideo');
+
+  async function initSenderCameraList(){
+    setDot('senderDot','');
+    document.getElementById('senderStatusText').textContent = '準備完了。ボタンを押してください';
+    try{
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d=>d.kind==='videoinput');
+      videoSelect.innerHTML = '';
+      cams.forEach((c,i)=>{
+        const opt = document.createElement('option');
+        opt.value = c.deviceId;
+        opt.textContent = c.label || `カメラ ${i+1}`;
+        videoSelect.appendChild(opt);
+      });
+    }catch(e){}
+  }
+
+  document.getElementById('startSenderBtn').onclick = async () => {
+    setDot('senderDot','warn');
+    document.getElementById('senderStatusText').textContent = 'カメラを起動中…';
+    try{
+      const constraints = {
+        video: videoSelect.value ? { deviceId: { exact: videoSelect.value } } : { facingMode: 'environment', width:1280, height:720 },
+        audio: false
+      };
+      localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      localVideo.srcObject = localStream;
+      await initSenderCameraList();
+      document.getElementById('startSenderBtn').disabled = true;
+      document.getElementById('startSenderBtn').textContent = '配信中…受信側(PC)の接続を待っています';
+      document.getElementById('senderStatusText').textContent = 'PC側を探しています…';
+
+      senderPeer = new Peer(senderPeerId(), {
+        config: { iceServers: [{ urls:'stun:stun.l.google.com:19302' }, { urls:'stun:stun1.l.google.com:19302' }] }
+      });
+
+      senderPeer.on('open', () => {
+        callReceiver();
+      });
+      senderPeer.on('error', (err) => {
+        if(err.type === 'unavailable-id'){
+          // someone/something already using this id (maybe a stale session) - retry with random suffix once
+          setDot('senderDot','warn');
+          document.getElementById('senderStatusText').textContent = '再接続中…';
+        }
+      });
+
+      function callReceiver(){
+        currentCall = senderPeer.call(receiverPeerId(), localStream);
+        if(!currentCall) return;
+        currentCall.on('stream', ()=>{});
+        currentCall.on('close', () => {
+          setDot('senderDot','warn');
+          document.getElementById('senderStatusText').textContent = '切断されました。再接続を試みます…';
+          setTimeout(callReceiver, 2000);
+        });
+        currentCall.on('error', () => setTimeout(callReceiver, 3000));
+        setDot('senderDot','ok');
+        document.getElementById('senderStatusText').textContent = 'PCに接続を試みています ✅（映らない場合はPC側も起動してください）';
+      }
+
+      // retry periodically until receiver is up
+      setInterval(() => {
+        if(!currentCall || currentCall.open === false){
+          callReceiver();
+        }
+      }, 4000);
+
+    }catch(err){
+      setDot('senderDot','err');
+      document.getElementById('senderStatusText').textContent = 'カメラの起動に失敗しました: ' + err.message;
+    }
+  };
+
+  // ===================== RECEIVER (PC) =====================
+  let receiverPeer, receiverStarted=false;
+  function startReceiver(){
+    if(receiverStarted) return;
+    receiverStarted = true;
+    const remoteVideo = document.getElementById('remoteVideo');
+    setDot('receiverDot','warn');
+    document.getElementById('receiverStatusText').textContent = 'スマホ側の接続を待っています…';
+
+    receiverPeer = new Peer(receiverPeerId(), {
+      config: { iceServers: [{ urls:'stun:stun.l.google.com:19302' }, { urls:'stun:stun1.l.google.com:19302' }] }
+    });
+
+    receiverPeer.on('open', () => {
+      document.getElementById('receiverStatusText').textContent = '準備完了。スマホ側で配信を開始してください…';
+    });
+
+    receiverPeer.on('call', (call) => {
+      call.answer(); // no outgoing stream needed
+      call.on('stream', (remoteStream) => {
+        remoteVideo.srcObject = remoteStream;
+        setDot('receiverDot','ok');
+        document.getElementById('receiverStatusText').textContent = 'スマホから映像を受信中 ✅';
+      });
+      call.on('close', () => {
+        setDot('receiverDot','warn');
+        document.getElementById('receiverStatusText').textContent = '接続が切れました。再接続を待っています…';
+      });
+    });
+
+    receiverPeer.on('error', (err) => {
+      setDot('receiverDot','err');
+      document.getElementById('receiverStatusText').textContent = 'エラー: ' + err.type + '（ページを再読み込みしてみてください）';
+    });
+  }
+})();
+</script>
+</body>
+</html>
