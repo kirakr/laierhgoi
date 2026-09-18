@@ -49,6 +49,32 @@
   button.primary:disabled{opacity:.5; cursor:default;}
   .back{background:none; border:none; color:var(--muted); font-size:13px; cursor:pointer; margin-bottom:14px; align-self:flex-start; padding:0;}
   .hint{font-size:12px; color:var(--muted); line-height:1.6; margin-top:14px;}
+
+  /* ---- receiver full-screen mode ---- */
+  body.receiver-mode{padding:0; align-items:stretch; justify-content:flex-start;}
+  body.receiver-mode h1, body.receiver-mode .sub{display:none;}
+  #receiverView.wrap{max-width:none; width:100%; height:100vh; padding:0;}
+  #receiverView .card{
+    width:100%; height:100%; max-width:none; border-radius:0; border:none; margin:0;
+    padding:0; display:flex; flex-direction:column; background:#000;
+  }
+  #receiverView video{
+    flex:1; width:100%; height:100%; border-radius:0; aspect-ratio:auto; object-fit:contain;
+  }
+  #receiverView .status{
+    position:absolute; top:12px; left:12px; background:rgba(0,0,0,.55); padding:6px 12px;
+    border-radius:20px; z-index:5; margin:0;
+  }
+  #receiverView .back{
+    position:absolute; top:12px; right:12px; background:rgba(0,0,0,.55); color:#fff;
+    padding:6px 14px; border-radius:20px; z-index:5; margin:0;
+  }
+  #receiverView{position:relative;}
+  #fullscreenBtn{
+    position:absolute; bottom:16px; right:16px; z-index:5; background:rgba(0,0,0,.55);
+    color:#fff; border:none; padding:10px 16px; border-radius:20px; font-size:13px; cursor:pointer;
+  }
+  #receiverView .hint{display:none;}
 </style>
 </head>
 <body>
@@ -59,15 +85,6 @@
 <div id="roleSelect" class="role-select">
   <button class="role-btn" id="btnSender"><span class="emoji">📱</span>送信（スマホ側）</button>
   <button class="role-btn" id="btnReceiver"><span class="emoji">🖥️</span>受信（PC / OBS側）</button>
-</div>
-
-<div id="setupView" class="wrap" style="display:none;">
-  <div class="card">
-    <label>合言葉（スマホとPCで同じ文字を入力してください／半角英数字推奨）</label>
-    <input type="text" id="roomCode" placeholder="例: mycam2026">
-    <button class="primary" id="confirmRoom">この合言葉で進む</button>
-    <div class="hint">一度入力すると、このブラウザに保存され次回から自動入力されます。他人と被らないよう、少し独自性のある文字列にしてください。</div>
-  </div>
 </div>
 
 <div id="senderView" class="wrap" style="display:none;">
@@ -86,6 +103,7 @@
   <div class="card">
     <div class="status"><span class="dot" id="receiverDot"></span><span id="receiverStatusText">スマホ側の接続を待っています…</span></div>
     <video id="remoteVideo" autoplay playsinline></video>
+    <button id="fullscreenBtn">⛶ 全画面表示</button>
     <div class="hint">
       OBSで使う場合：「ソース」→「＋」→「ブラウザ」で、このHTMLファイルのパスを<br>
       <code>file:///C:/.../cam-bridge-standalone.html</code> のように指定してください（幅1280×高さ720推奨）。
@@ -96,44 +114,37 @@
 <script>
 (function(){
   const roleSelect = document.getElementById('roleSelect');
-  const setupView = document.getElementById('setupView');
   const senderView = document.getElementById('senderView');
   const receiverView = document.getElementById('receiverView');
-  const roomInput = document.getElementById('roomCode');
-  let pendingRole = null;
 
-  roomInput.value = localStorage.getItem('cambridge_room') || '';
-
-  document.getElementById('btnSender').onclick = () => { pendingRole='sender'; showSetup(); };
-  document.getElementById('btnReceiver').onclick = () => { pendingRole='receiver'; showSetup(); };
+  document.getElementById('btnSender').onclick = () => showView('sender');
+  document.getElementById('btnReceiver').onclick = () => showView('receiver');
   document.getElementById('backFromSender').onclick = () => showView('select');
-  document.getElementById('backFromReceiver').onclick = () => showView('select');
-
-  function showSetup(){
-    if(roomInput.value.trim()){ proceedWithRole(); return; }
-    roleSelect.style.display='none';
-    setupView.style.display='flex';
-  }
-  document.getElementById('confirmRoom').onclick = proceedWithRole;
-
-  function proceedWithRole(){
-    const code = roomInput.value.trim();
-    if(!code){ alert('合言葉を入力してください'); return; }
-    localStorage.setItem('cambridge_room', code);
-    showView(pendingRole);
-  }
+  document.getElementById('backFromReceiver').onclick = () => { document.body.classList.remove('receiver-mode'); showView('select'); };
 
   function showView(v){
     roleSelect.style.display = v==='select' ? 'flex' : 'none';
-    setupView.style.display = 'none';
     senderView.style.display = v==='sender' ? 'flex' : 'none';
     receiverView.style.display = v==='receiver' ? 'flex' : 'none';
+    document.body.classList.toggle('receiver-mode', v==='receiver');
     if(v==='receiver') startReceiver();
     if(v==='sender') initSenderCameraList();
   }
 
+  document.getElementById('fullscreenBtn').onclick = () => {
+    const el = receiverView;
+    if(!document.fullscreenElement){
+      (el.requestFullscreen || el.webkitRequestFullscreen || function(){}).call(el);
+    }else{
+      (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
+    }
+  };
+
   function setDot(id, state){ document.getElementById(id).className = 'dot ' + (state||''); }
-  function roomCode(){ return (localStorage.getItem('cambridge_room')||'default').replace(/[^a-zA-Z0-9_-]/g,''); }
+  // Fixed shared identifiers - no password/room code needed. Change this string
+  // only if you need to run more than one independent CamBridge pair from the
+  // same GitHub Pages deployment at the same time.
+  function roomCode(){ return 'fixed'; }
   function senderPeerId(){ return 'cambridge-' + roomCode() + '-sender'; }
   function receiverPeerId(){ return 'cambridge-' + roomCode() + '-receiver'; }
 
